@@ -1,0 +1,42 @@
+[project]
+name = "quiz-app"
+version = "0.1.0"
+description = "マークダウン形式の問題と解答を読み込むインタラクティブなクイズアプリ"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "streamlit>=1.55.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.5",
+]
+
+# --- Ruff 設定 ---
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific rules
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["quiz_app"]
+
+# --- pytest 設定 ---
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,216 @@
+"""データ解析層 (Data Layer)。
+
+Markdownファイルの読み込みと構造化データへの変換を担当する。
+Streamlitには一切依存しない。
+"""
+
+import re
+import unicodedata
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+
+
+class QuizParseError(Exception):
+    """クイズ用Markdownの解析に失敗したことを表す例外。"""
+
+
+@dataclass(frozen=True)
+class Choice:
+    """選択肢を表す不変データクラス。"""
+
+    number: int
+    text: str
+
+
+@dataclass(frozen=True)
+class Question:
+    """問題を表す不変データクラス。"""
+
+    number: int
+    text: str
+    choices: tuple[Choice, ...] = field(default_factory=tuple)
+    correct_number: int = 0
+    explanation: str = ""
+
+    def __post_init__(self) -> None:
+        """入力された選択肢を不変のタプルへ正規化する。"""
+        object.__setattr__(self, "choices", tuple(self.choices))
+
+
+QUESTION_HEADER_PATTERN = re.compile(
+    r"^###\s*(?:No\.|\N{FULLWIDTH LATIN CAPITAL LETTER N}o\.|"
+    r"\N{FULLWIDTH LATIN CAPITAL LETTER N}\N{FULLWIDTH LATIN CAPITAL LETTER O}\.)"
+    r"\s*(?P<number>\d+)\s*$",
+    re.MULTILINE,
+)
+CHOICE_PATTERN = re.compile(r"^-\s*(?P<number>\d+)\.\s*(?P<text>.+?)\s*$", re.MULTILINE)
+ANSWER_NUMBER_PATTERN = re.compile(
+    r"^.*正解[^\n]*?(?:\N{FULLWIDTH COLON}|:|は)\s*(?P<number>\d+).*$",
+    re.MULTILINE,
+)
+ANSWER_STANDALONE_NUMBER_PATTERN = re.compile(
+    r"^\*\*\s*(?P<number>\d+)\s*\*\*(?:.*)$",
+    re.MULTILINE,
+)
+IGNORED_EXPLANATION_LINE_PATTERN = re.compile(
+    r"^(?:---+|###\s*【解答と解説】|##\s*正解の選択肢|###\s*詳細な解説)\s*$"
+)
+
+
+def parse_questions(md_text: str) -> list[Question]:
+    """問題用Markdown文字列を Question の一覧へ変換する。"""
+    questions: list[Question] = []
+    matches = list(QUESTION_HEADER_PATTERN.finditer(md_text))
+
+    for index, match in enumerate(matches):
+        block_start = match.end()
+        is_last_question = index == len(matches) - 1
+        block_end = len(md_text) if is_last_question else matches[index + 1].start()
+        question_block = md_text[block_start:block_end].strip()
+        questions.append(
+            Question(
+                number=int(match.group("number")),
+                text=_extract_question_text(question_block),
+                choices=_extract_choices(question_block),
+                correct_number=0,
+                explanation="",
+            )
+        )
+
+    return questions
+
+
+def merge_answers(questions: list[Question], a_md_text: str) -> list[Question]:
+    """解答用Markdown文字列を Question の一覧へ結合する。"""
+    answers_by_number = _parse_answer_blocks(a_md_text)
+    merged_questions: list[Question] = []
+
+    for question in questions:
+        correct_number, explanation = answers_by_number.get(question.number, (0, ""))
+        merged_questions.append(
+            replace(
+                question,
+                correct_number=correct_number,
+                explanation=explanation,
+            )
+        )
+
+    return merged_questions
+
+
+def load_quiz_data(q_file_path: str, a_file_path: str) -> list[Question]:
+    """QファイルとAファイルを読み込み、解答付きの問題一覧を返す。"""
+    q_md_text = Path(q_file_path).read_text(encoding="utf-8")
+    a_md_text = Path(a_file_path).read_text(encoding="utf-8")
+
+    try:
+        questions = parse_questions(q_md_text)
+        if not questions:
+            raise QuizParseError("問題用Markdownの形式が不正です。")
+
+        if not QUESTION_HEADER_PATTERN.search(a_md_text):
+            raise QuizParseError("解答用Markdownの形式が不正です。")
+
+        merged_questions = merge_answers(questions, a_md_text)
+        if not merged_questions:
+            raise QuizParseError("問題データを結合できませんでした。")
+    except QuizParseError:
+        raise
+    except Exception as exc:
+        raise QuizParseError("クイズデータの解析に失敗しました。") from exc
+
+    return merged_questions
+
+
+def _extract_question_text(question_block: str) -> str:
+    """問題ブロックから問題文を抽出する。"""
+    lines: list[str] = []
+
+    for line in question_block.splitlines():
+        if CHOICE_PATTERN.match(line.strip()):
+            break
+        stripped_line = line.strip()
+        if stripped_line:
+            lines.append(stripped_line)
+
+    return "\n".join(lines)
+
+
+def _extract_choices(question_block: str) -> list[Choice]:
+    """問題ブロックから選択肢一覧を抽出する。"""
+    return [
+        Choice(number=int(match.group("number")), text=match.group("text"))
+        for match in CHOICE_PATTERN.finditer(question_block)
+    ]
+
+
+def _parse_answer_blocks(a_md_text: str) -> dict[int, tuple[int, str]]:
+    """解答用Markdown文字列を問題番号ごとの正解番号と解説へ変換する。"""
+    answers_by_number: dict[int, tuple[int, str]] = {}
+    matches = list(QUESTION_HEADER_PATTERN.finditer(a_md_text))
+
+    for index, match in enumerate(matches):
+        block_start = match.end()
+        is_last_question = index == len(matches) - 1
+        block_end = len(a_md_text) if is_last_question else matches[index + 1].start()
+        answer_block = a_md_text[block_start:block_end].strip()
+        answers_by_number[int(match.group("number"))] = _extract_answer_data(
+            answer_block
+        )
+
+    return answers_by_number
+
+
+def _extract_answer_data(answer_block: str) -> tuple[int, str]:
+    """問題ごとの解答ブロックから正解番号と解説を抽出する。"""
+    answer_number, explanation_start = _extract_answer_number(answer_block)
+    explanation = _extract_explanation(answer_block, explanation_start)
+    return answer_number, explanation
+
+
+def _extract_answer_number(answer_block: str) -> tuple[int, int]:
+    """解答ブロックから正解番号とその位置を抽出する。"""
+    inline_match = ANSWER_NUMBER_PATTERN.search(answer_block)
+    if inline_match is not None:
+        return _to_halfwidth_number(inline_match.group("number")), inline_match.end()
+
+    marker_match = re.search(r"\*\*【正解の選択肢】\*\*", answer_block)
+    if marker_match is not None:
+        number_match = ANSWER_STANDALONE_NUMBER_PATTERN.search(
+            answer_block,
+            marker_match.end(),
+        )
+        if number_match is not None:
+            return (
+                _to_halfwidth_number(number_match.group("number")),
+                number_match.end(),
+            )
+
+    standalone_match = ANSWER_STANDALONE_NUMBER_PATTERN.search(answer_block)
+    if standalone_match is not None:
+        return (
+            _to_halfwidth_number(standalone_match.group("number")),
+            standalone_match.end(),
+        )
+
+    return 0, 0
+
+
+def _extract_explanation(answer_block: str, explanation_start: int) -> str:
+    """解答ブロックから解説本文を抽出する。"""
+    explanation_lines: list[str] = []
+
+    for line in answer_block[explanation_start:].splitlines():
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        if IGNORED_EXPLANATION_LINE_PATTERN.match(stripped_line):
+            continue
+        explanation_lines.append(stripped_line)
+
+    return "\n".join(explanation_lines)
+
+
+def _to_halfwidth_number(number_text: str) -> int:
+    """全角数字を半角数字へ正規化して整数へ変換する。"""
+    return int(unicodedata.normalize("NFKC", number_text))

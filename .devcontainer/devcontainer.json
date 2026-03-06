@@ -1,0 +1,26 @@
+{
+  "name": "quiz-app",
+  "build": {
+    "dockerfile": "../Containerfile",
+    "context": ".."
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/app/.venv/bin/python",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+  "postCreateCommand": "uv --version && uv sync --frozen --all-groups",
+  "forwardPorts": [8501],
+  "remoteUser": "root",
+  "runArgs": ["--userns=keep-id"]
+}
