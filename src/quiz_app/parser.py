@@ -40,10 +40,15 @@ class Question:
 QUESTION_HEADER_PATTERN = re.compile(
     r"^###\s*(?:No\.|\N{FULLWIDTH LATIN CAPITAL LETTER N}o\.|"
     r"\N{FULLWIDTH LATIN CAPITAL LETTER N}\N{FULLWIDTH LATIN CAPITAL LETTER O}\.)"
-    r"\s*(?P<number>\d+)\s*$",
+    r"\s*(?P<number>\d+)",
     re.MULTILINE,
 )
-CHOICE_PATTERN = re.compile(r"^-\s*(?P<number>\d+)\.\s*(?P<text>.+?)\s*$", re.MULTILINE)
+CHOICE_PATTERN = re.compile(
+    r"^(?:-\s*)?(?P<number>\d+)\.\s*(?P<text>.+?)\s*$", re.MULTILINE
+)
+TABLE_CHOICE_PATTERN = re.compile(
+    r"^\|\s*(?:[^|\n]*\|\s*)?(?P<number>\d+)\s*\|(?P<text>.+?)\|\s*$", re.MULTILINE
+)
 ANSWER_NUMBER_PATTERN = re.compile(
     r"^.*正解[^\n]*?(?:\N{FULLWIDTH COLON}|:|は)\s*(?P<number>\d+).*$",
     re.MULTILINE,
@@ -129,19 +134,29 @@ def _extract_question_text(question_block: str) -> str:
     for line in question_block.splitlines():
         if CHOICE_PATTERN.match(line.strip()):
             break
-        stripped_line = line.strip()
-        if stripped_line:
-            lines.append(stripped_line)
+        if TABLE_CHOICE_PATTERN.match(line.strip()):
+            break
+        lines.append(line.strip())
+
+    # 末尾の空行を削除してから結合
+    while lines and not lines[-1]:
+        lines.pop()
 
     return "\n".join(lines)
 
 
 def _extract_choices(question_block: str) -> list[Choice]:
     """問題ブロックから選択肢一覧を抽出する。"""
-    return [
-        Choice(number=int(match.group("number")), text=match.group("text"))
+    choices = [
+        Choice(number=int(match.group("number")), text=match.group("text").strip())
         for match in CHOICE_PATTERN.finditer(question_block)
     ]
+    if not choices:
+        choices = [
+            Choice(number=int(match.group("number")), text=match.group("text").strip())
+            for match in TABLE_CHOICE_PATTERN.finditer(question_block)
+        ]
+    return choices
 
 
 def _parse_answer_blocks(a_md_text: str) -> dict[int, tuple[int, str]]:

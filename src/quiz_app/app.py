@@ -4,28 +4,37 @@
 parser.py と engine.py を呼び出す。
 """
 
-import sys
 from pathlib import Path
 
 import streamlit as st
 
+from quiz_app.engine import QuizEngine
+from quiz_app.parser import Question, load_quiz_data
 
-def _ensure_package_root() -> None:
-    """現在の src ディレクトリを import path の先頭へ追加する。"""
-    package_root = Path(__file__).resolve().parents[1]
-    if str(package_root) not in sys.path:
-        sys.path.insert(0, str(package_root))
+MD_DIR = Path(__file__).resolve().parents[2] / "md"
 
 
-def _start_quiz() -> None:
+def _discover_quiz_files() -> dict[str, tuple[Path, Path]]:
+    """md/ ディレクトリから Q/A ファイルのペアを検出する。"""
+    quiz_files: dict[str, tuple[Path, Path]] = {}
+    for q_file in sorted(MD_DIR.glob("*Q.md")):
+        stem = q_file.stem[:-1]  # "2Q" -> "2"
+        a_file = q_file.with_name(f"{stem}A.md")
+        if a_file.exists():
+            quiz_files[f"第{stem}回"] = (q_file, a_file)
+    return quiz_files
+
+
+def _start_quiz(
+    q_path: Path,
+    a_path: Path,
+    is_random: bool,
+    limit: int | None,
+) -> None:
     """問題データを読み込み、クイズを開始する。"""
-    _ensure_package_root()
-    from quiz_app.engine import QuizEngine
-    from quiz_app.parser import load_quiz_data
-
-    questions = load_quiz_data("dummy_q.md", "dummy_a.md")
+    questions = load_quiz_data(str(q_path), str(a_path))
     engine = QuizEngine()
-    engine.start_quiz(questions=questions, is_random=False, limit=None)
+    engine.start_quiz(questions=questions, is_random=is_random, limit=limit)
     st.session_state["engine"] = engine
     st.session_state["page"] = "quiz"
     st.session_state["is_answered"] = False
@@ -36,8 +45,35 @@ def _start_quiz() -> None:
 
 def _render_home() -> None:
     """ホーム画面を描画する。"""
-    if "engine" not in st.session_state and st.button("クイズ開始"):
-        _start_quiz()
+    quiz_files = _discover_quiz_files()
+
+    if not quiz_files:
+        st.warning("md/ ディレクトリにクイズファイルが見つかりません。")
+        return
+
+    selected_label = st.selectbox(
+        "出題回を選択",
+        options=list(quiz_files.keys()),
+    )
+    assert selected_label is not None
+    q_path, a_path = quiz_files[selected_label]
+
+    is_random = st.checkbox("ランダム出題", value=False)
+
+    questions = load_quiz_data(str(q_path), str(a_path))
+    total_count = len(questions)
+
+    limit_input = st.number_input(
+        "出題数 (0 で全問)",
+        min_value=0,
+        max_value=total_count,
+        value=0,
+        step=1,
+    )
+    limit: int | None = int(limit_input) if limit_input > 0 else None
+
+    if st.button("クイズ開始"):
+        _start_quiz(q_path, a_path, is_random, limit)
 
 
 def _render_play() -> None:
@@ -64,6 +100,10 @@ def _render_play() -> None:
         st.markdown(answered_question.explanation)
 
         if st.button("次の問題へ"):
+            # 古い radio キーを session_state からクリア
+            old_key = f"quiz_radio_{answered_question.number}"
+            st.session_state.pop(old_key, None)
+
             st.session_state["is_answered"] = False
             st.session_state["last_question"] = None
             st.session_state["last_is_correct"] = None
@@ -86,24 +126,29 @@ def _render_play() -> None:
     st.markdown(f"### 第{current_question.number}問")
     st.markdown(current_question.text)
 
-    choice_map = {choice.text: choice.number for choice in current_question.choices}
-    selected_choice = st.radio(
+    choice_labels = [choice.text for choice in current_question.choices]
+    choice_numbers = [choice.number for choice in current_question.choices]
+
+    selected_label = st.radio(
         "選択肢を選んでください",
-        options=list(choice_map.keys()),
+        options=choice_labels,
+        key=f"quiz_radio_{current_question.number}",
     )
 
+    selected_number = choice_numbers[choice_labels.index(selected_label)]
+
     if st.button("解答する"):
-        is_correct = engine.submit_answer(choice_map[selected_choice])
+        is_correct = engine.submit_answer(selected_number)
         st.session_state["is_answered"] = True
         st.session_state["last_question"] = current_question
         st.session_state["last_is_correct"] = is_correct
         st.rerun()
 
 
-def _get_correct_choice_text(question: object) -> str:
+def _get_correct_choice_text(question: Question) -> str:
     """問題オブジェクトから正解の選択肢テキストを取得する。"""
-    for choice in getattr(question, "choices", ()):
-        if choice.number == getattr(question, "correct_number", 0):
+    for choice in question.choices:
+        if choice.number == question.correct_number:
             return choice.text
 
     return ""
