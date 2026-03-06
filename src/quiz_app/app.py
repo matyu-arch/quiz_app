@@ -4,12 +4,18 @@
 parser.py と engine.py を呼び出す。
 """
 
+import sys
 from pathlib import Path
 
-import streamlit as st
+# Streamlit 実行時のため、src ディレクトリを sys.path に追加する
+src_dir = str(Path(__file__).resolve().parents[1])
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
-from quiz_app.engine import QuizEngine
-from quiz_app.parser import Question, load_quiz_data
+import streamlit as st  # noqa: E402
+
+from quiz_app.engine import QuizEngine  # noqa: E402
+from quiz_app.parser import Question, load_quiz_data  # noqa: E402
 
 MD_DIR = Path(__file__).resolve().parents[2] / "md"
 
