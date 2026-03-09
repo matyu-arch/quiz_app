@@ -131,6 +131,32 @@ def test_parse_questions_handles_choices_without_dash_prefix() -> None:
     )
 
 
+def test_parse_questions_merges_multiline_choice_text() -> None:
+    """複数行に折り返された選択肢本文を連結して抽出できることを確認する。"""
+    md_text = """\
+### No.1
+次の記述のうち、正しいものはどれか。
+
+1. 最初の行が長くて途中で改行されて
+続きの行にも本文が続いている。
+2. これは1行の選択肢である。
+3. 別の長い選択肢で
+さらに次の行まで続いている。
+""".strip()
+
+    questions = parse_questions(md_text)
+
+    assert len(questions) == 1
+    assert questions[0].choices == (
+        Choice(
+            number=1,
+            text="最初の行が長くて途中で改行されて\n続きの行にも本文が続いている。",
+        ),
+        Choice(number=2, text="これは1行の選択肢である。"),
+        Choice(number=3, text="別の長い選択肢で\nさらに次の行まで続いている。"),
+    )
+
+
 def test_parse_questions_table_format():
     """表形式で記述された選択肢が正しく抽出されること。"""
     md_text = """### No.1

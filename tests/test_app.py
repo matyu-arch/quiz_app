@@ -42,6 +42,24 @@ class DummyQuestion:
     explanation: str
 
 
+def _make_table_question() -> DummyQuestion:
+    """表形式問題を表すダミー問題を生成する。"""
+    return DummyQuestion(
+        number=50,
+        text=(
+            "表形式問題です。\n\n"
+            "| 選択肢 | 室の種類 | 柱のささえる床の数 |\n"
+            "|---|---|---:|"
+        ),
+        choices=(
+            DummyChoice(number=1, text="病院の病室 | 4"),
+            DummyChoice(number=2, text="事務室 | 10"),
+        ),
+        correct_number=1,
+        explanation="表形式の解説",
+    )
+
+
 def _make_questions(count: int) -> list[DummyQuestion]:
     """テスト用のダミー問題一覧を生成する。"""
     return [
@@ -144,23 +162,81 @@ def test_app_clicking_start_sets_engine_and_switches_page() -> None:
 
 
 def test_app_play_screen_displays_question_and_choices() -> None:
-    """プレイ画面で問題と選択肢が表示されることを確認する。"""
+    """プレイ画面で問題と個別の選択肢ボタンが表示されることを確認する。"""
     app = _create_quiz_app()
 
     assert _has_text(app, "Q1")
-    assert len(app.radio) == 1
-    assert app.radio[0].options == ["A", "B", "C"]
+    assert _has_text(app, "1. A")
+    assert _has_text(app, "2. B")
+    assert _has_text(app, "3. C")
+    assert any(button.label == "選択肢1で解答" for button in app.button)
+    assert any(button.label == "選択肢2で解答" for button in app.button)
+    assert any(button.label == "選択肢3で解答" for button in app.button)
 
 
 def test_app_play_screen_shows_explanation_after_answer() -> None:
     """解答後に解説と次の問題ボタンが表示されることを確認する。"""
     app = _create_quiz_app()
 
-    app.radio[0].set_value("A")
-    _click_button(app, "解答する")
+    _click_button(app, "選択肢1で解答")
 
+    assert _has_text(app, "Q1")
     assert _has_text(app, "E1")
     assert any(button.label == "次の問題へ" for button in app.button)
+
+
+def test_app_answered_screen_shows_choice_review_for_correct_answer() -> None:
+    """正解時は選んだ選択肢のみに ✅ が付くことを確認する。"""
+    app = _create_quiz_app()
+
+    _click_button(app, "選択肢1で解答")
+
+    assert _has_text(app, "✅ 1. A")
+    assert not _has_text(app, "❌ 1. A")
+    assert not _has_text(app, "✅ 2. B")
+
+
+def test_app_answered_screen_shows_choice_review_for_wrong_answer() -> None:
+    """不正解時は選択肢に ❌、正解肢に ✅ が付くことを確認する。"""
+    app = _create_quiz_app()
+
+    _click_button(app, "選択肢2で解答")
+
+    assert _has_text(app, "❌ 2. B")
+    assert _has_text(app, "✅ 1. A")
+
+
+def test_build_answer_review_lines_returns_marked_choices() -> None:
+    """選択結果に応じたマーク付き選択肢一覧を生成できることを確認する。"""
+    from quiz_app.app import _build_answer_review_lines
+
+    question = _make_questions(1)[0]
+
+    correct_lines = _build_answer_review_lines(question, selected_number=1)
+    wrong_lines = _build_answer_review_lines(question, selected_number=2)
+
+    assert correct_lines == ["✅ 1. A", "2. B", "3. C"]
+    assert wrong_lines == ["✅ 1. A", "❌ 2. B", "3. C"]
+
+
+def test_build_feedback_markup_returns_success_style_for_correct_answer() -> None:
+    """正解時は緑系のマークアップを返すことを確認する。"""
+    from quiz_app.app import _build_feedback_markup
+
+    markup = _build_feedback_markup(True)
+
+    assert "正解です。" in markup
+    assert "#16a34a" in markup
+
+
+def test_build_feedback_markup_returns_error_style_for_wrong_answer() -> None:
+    """不正解時は赤系のマークアップを返すことを確認する。"""
+    from quiz_app.app import _build_feedback_markup
+
+    markup = _build_feedback_markup(False)
+
+    assert "不正解です。" in markup
+    assert "#dc2626" in markup
 
 
 def test_app_result_screen_displays_score_and_mistakes() -> None:
@@ -220,3 +296,49 @@ def test_importing_app_module_does_not_run_main() -> None:
         importlib.import_module("quiz_app.app")
 
     mocked_title.assert_not_called()
+
+
+def test_build_choice_labels_returns_short_labels_for_table_question() -> None:
+    """表形式問題では短いラジオラベルを返すことを確認する。"""
+    from quiz_app.app import _build_choice_labels
+
+    labels = _build_choice_labels(_make_table_question())
+
+    assert labels == ["選択肢 1", "選択肢 2"]
+
+
+def test_build_choice_labels_returns_text_labels_for_regular_question() -> None:
+    """通常問題では番号付きの選択肢文をラベルに使うことを確認する。"""
+    from quiz_app.app import _build_choice_labels
+
+    question = _make_questions(1)[0]
+
+    labels = _build_choice_labels(question)
+
+    assert labels == ["1. A", "2. B", "3. C"]
+
+
+def test_build_question_body_and_table_returns_table_markdown() -> None:
+    """表形式問題から本文と表 Markdown を分離できることを確認する。"""
+    from quiz_app.app import _build_question_body_and_table
+
+    body, table_markdown = _build_question_body_and_table(_make_table_question())
+
+    assert "表形式問題です。" in body
+    assert table_markdown is not None
+    assert "| 選択肢 | 室の種類 | 柱のささえる床の数 |" in table_markdown
+    assert "| 1 | 病院の病室 | 4 |" in table_markdown
+    assert "| 2 | 事務室 | 10 |" in table_markdown
+
+
+def test_build_radio_option_css_enables_wrapping() -> None:
+    """長文選択肢の折り返し用 CSS を返すことを確認する。"""
+    from quiz_app.app import _build_radio_option_css
+
+    css = _build_radio_option_css()
+
+    assert "white-space: normal" in css
+    assert "word-break: break-word" in css
+    assert ".stMarkdown" in css
+    assert '[data-baseweb="radio"]' in css
+    assert "overflow-wrap: anywhere" in css

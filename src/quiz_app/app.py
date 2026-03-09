@@ -20,6 +20,117 @@ from quiz_app.parser import Question, QuizParseError, load_quiz_data  # noqa: E4
 MD_DIR = Path(__file__).resolve().parents[2] / "md"
 
 
+def _build_radio_option_css() -> str:
+    """長い選択肢を折り返して表示するための CSS を返す。"""
+    return """
+<style>
+[data-baseweb="radio"] label {
+    align-items: flex-start;
+}
+[data-baseweb="radio"] label,
+[data-baseweb="radio"] label p,
+[data-baseweb="radio"] label div,
+.stMarkdown p,
+.stMarkdown li {
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+</style>
+"""
+
+
+def _build_feedback_markup(is_correct: bool) -> str:
+    """正誤に応じた強調表示用マークアップを返す。"""
+    if is_correct:
+        accent_color = "#16a34a"
+        background_color = "rgba(22, 163, 74, 0.16)"
+        message = "正解です。"
+    else:
+        accent_color = "#dc2626"
+        background_color = "rgba(220, 38, 38, 0.16)"
+        message = "不正解です。"
+
+    return f"""
+<div style="
+    margin: 0.75rem 0;
+    padding: 0.85rem 1rem;
+    border-left: 0.4rem solid {accent_color};
+    background: {background_color};
+    border-radius: 0.5rem;
+    font-weight: 700;
+">
+    {message}
+</div>
+"""
+
+
+def _is_table_question(question: Question) -> bool:
+    """問題文に Markdown テーブルが含まれるかを判定する。"""
+    return any(line.strip().startswith("|") for line in question.text.splitlines())
+
+
+def _build_question_body_and_table(question: Question) -> tuple[str, str | None]:
+    """問題文を本文と表 Markdown に分けて返す。"""
+    if not _is_table_question(question):
+        return question.text, None
+
+    text_lines = question.text.splitlines()
+    body_lines: list[str] = []
+    table_lines: list[str] = []
+
+    for line in text_lines:
+        stripped_line = line.strip()
+        if stripped_line.startswith("|"):
+            table_lines.append(stripped_line)
+        else:
+            body_lines.append(line)
+
+    full_table_lines = list(table_lines)
+    for choice in question.choices:
+        full_table_lines.append(f"| {choice.number} | {choice.text} |")
+
+    body = "\n".join(body_lines).strip()
+    table_markdown = "\n".join(full_table_lines) if full_table_lines else None
+    return body, table_markdown
+
+
+def _build_choice_labels(question: Question) -> list[str]:
+    """問題形式に応じた選択肢ラベル一覧を返す。"""
+    if _is_table_question(question):
+        return [f"選択肢 {choice.number}" for choice in question.choices]
+
+    return [f"{choice.number}. {choice.text}" for choice in question.choices]
+
+
+def _build_choice_display_lines(question: Question) -> list[str]:
+    """表示用の選択肢文字列一覧を返す。"""
+    if _is_table_question(question):
+        return [f"選択肢 {choice.number}" for choice in question.choices]
+
+    return [f"{choice.number}. {choice.text}" for choice in question.choices]
+
+
+def _build_answer_review_lines(
+    question: Question,
+    selected_number: int | None,
+) -> list[str]:
+    """解答後に表示する正誤マーク付き選択肢一覧を返す。"""
+    lines: list[str] = []
+
+    for choice in question.choices:
+        choice_label = f"{choice.number}. {choice.text}"
+        prefix = ""
+        if choice.number == question.correct_number:
+            prefix = "✅ "
+        elif selected_number is not None and choice.number == selected_number:
+            prefix = "❌ "
+
+        lines.append(f"{prefix}{choice_label}")
+
+    return lines
+
+
 def _discover_quiz_files() -> dict[str, tuple[Path, Path]]:
     """md/ ディレクトリから Q/A ファイルのペアを検出する。"""
     quiz_files: dict[str, tuple[Path, Path]] = {}
@@ -51,6 +162,7 @@ def _start_quiz(
     st.session_state["is_answered"] = False
     st.session_state["last_question"] = None
     st.session_state["last_is_correct"] = None
+    st.session_state["last_selected_number"] = None
     st.rerun()
 
 
@@ -95,23 +207,34 @@ def _render_home() -> None:
 def _render_play() -> None:
     """プレイ画面を描画する。"""
     engine = st.session_state["engine"]
+    st.markdown(_build_radio_option_css(), unsafe_allow_html=True)
 
     if st.session_state.get("is_answered", False):
         answered_question = st.session_state.get("last_question")
         last_is_correct = st.session_state.get("last_is_correct", False)
+        last_selected_number = st.session_state.get("last_selected_number")
 
         if answered_question is None:
             st.session_state["is_answered"] = False
             st.rerun()
             return
 
+        answered_body, answered_table = _build_question_body_and_table(
+            answered_question
+        )
         st.markdown(f"### 第{answered_question.number}問")
-        st.markdown(answered_question.text)
+        st.markdown(answered_body)
+        if answered_table is not None:
+            st.markdown(answered_table)
 
-        if last_is_correct:
-            st.markdown("**正解です。**")
-        else:
-            st.markdown("**不正解です。**")
+        st.markdown(_build_feedback_markup(last_is_correct), unsafe_allow_html=True)
+
+        st.markdown("### 選択結果")
+        for line in _build_answer_review_lines(
+            answered_question,
+            selected_number=last_selected_number,
+        ):
+            st.markdown(line)
 
         st.markdown(answered_question.explanation)
 
@@ -123,6 +246,7 @@ def _render_play() -> None:
             st.session_state["is_answered"] = False
             st.session_state["last_question"] = None
             st.session_state["last_is_correct"] = None
+            st.session_state["last_selected_number"] = None
 
             try:
                 engine.get_current_question()
@@ -139,26 +263,30 @@ def _render_play() -> None:
         st.rerun()
         return
 
+    question_body, question_table = _build_question_body_and_table(current_question)
     st.markdown(f"### 第{current_question.number}問")
-    st.markdown(current_question.text)
+    st.markdown(question_body)
+    if question_table is not None:
+        st.markdown(question_table)
 
-    choice_labels = [choice.text for choice in current_question.choices]
-    choice_numbers = [choice.number for choice in current_question.choices]
-
-    selected_label = st.radio(
-        "選択肢を選んでください",
-        options=choice_labels,
-        key=f"quiz_radio_{current_question.number}",
-    )
-
-    selected_number = choice_numbers[choice_labels.index(selected_label)]
-
-    if st.button("解答する"):
-        is_correct = engine.submit_answer(selected_number)
-        st.session_state["is_answered"] = True
-        st.session_state["last_question"] = current_question
-        st.session_state["last_is_correct"] = is_correct
-        st.rerun()
+    st.markdown("選択肢を選んでください")
+    display_lines = _build_choice_display_lines(current_question)
+    for choice, display_line in zip(
+        current_question.choices,
+        display_lines,
+        strict=True,
+    ):
+        st.markdown(display_line)
+        if st.button(
+            f"選択肢{choice.number}で解答",
+            key=f"answer_button_{current_question.number}_{choice.number}",
+        ):
+            is_correct = engine.submit_answer(choice.number)
+            st.session_state["is_answered"] = True
+            st.session_state["last_question"] = current_question
+            st.session_state["last_is_correct"] = is_correct
+            st.session_state["last_selected_number"] = choice.number
+            st.rerun()
 
 
 def _get_correct_choice_text(question: Question) -> str:
@@ -178,6 +306,7 @@ def _reset_to_home() -> None:
         "is_answered",
         "last_question",
         "last_is_correct",
+        "last_selected_number",
     ]:
         st.session_state.pop(key, None)
 
