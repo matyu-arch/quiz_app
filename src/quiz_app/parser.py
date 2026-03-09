@@ -49,12 +49,39 @@ CHOICE_PATTERN = re.compile(
 TABLE_CHOICE_PATTERN = re.compile(
     r"^\|\s*(?:[^|\n]*\|\s*)?(?P<number>\d+)\s*\|(?P<text>.+?)\|\s*$", re.MULTILINE
 )
+NUMBER_CHARS_PATTERN = r"0-9\uFF10-\uFF19"
 ANSWER_NUMBER_PATTERN = re.compile(
-    r"^.*正解[^\n]*?(?:\N{FULLWIDTH COLON}|:|は)\s*(?P<number>\d+).*$",
+    rf"^.*正解[^\n]*?(?:\N{{FULLWIDTH COLON}}|:|は)\s*"
+    rf"[^{NUMBER_CHARS_PATTERN}\n]*?(?P<number>[{NUMBER_CHARS_PATTERN}]+)"
+    rf"[^{NUMBER_CHARS_PATTERN}\n]*.*$",
+    re.MULTILINE,
+)
+ANSWER_NUMBER_IN_BOLD_PATTERN = re.compile(
+    rf"^.*正解[^\n]*?\*\*(?P<number>[{NUMBER_CHARS_PATTERN}]+)\*\*.*$",
     re.MULTILINE,
 )
 ANSWER_STANDALONE_NUMBER_PATTERN = re.compile(
-    r"^\*\*\s*(?P<number>\d+)\s*\*\*(?:.*)$",
+    rf"^\*\*\s*(?:【\s*)?(?:選択肢\s*)?(?P<number>[{NUMBER_CHARS_PATTERN}]+)"
+    rf"(?:\s*】)?(?:\s*\.\s*.*)?\*\*(?:.*)$",
+    re.MULTILINE,
+)
+ANSWER_NUMBER_IN_BRACKETS_PATTERN = re.compile(
+    rf"^.*【\s*(?P<number>[{NUMBER_CHARS_PATTERN}]+)\s*】.*正解.*$",
+    re.MULTILINE,
+)
+INCORRECT_ANSWER_NUMBER_PATTERN = re.compile(
+    rf"^.*誤っている(?:記述|もの|選択肢)?[^\n]*?(?:は|が)\s*"
+    rf"[^{NUMBER_CHARS_PATTERN}\n]*?(?P<number>[{NUMBER_CHARS_PATTERN}]+)"
+    rf"[^{NUMBER_CHARS_PATTERN}\n]*.*$",
+    re.MULTILINE,
+)
+ANSWER_NUMBER_IN_EXPLANATION_PATTERN = re.compile(
+    rf"^(?:\*+\s*)?\*\*(?:選択肢\s*)?(?P<number>[{NUMBER_CHARS_PATTERN}]+)\."
+    r".*正解.*$",
+    re.MULTILINE,
+)
+ANSWER_MARKER_PATTERN = re.compile(
+    r"\*\*【正解(?:の選択肢)?】\*\*|##\s*正解の選択肢",
     re.MULTILINE,
 )
 IGNORED_EXPLANATION_LINE_PATTERN = re.compile(
@@ -119,6 +146,8 @@ def load_quiz_data(q_file_path: str, a_file_path: str) -> list[Question]:
         merged_questions = merge_answers(questions, a_md_text)
         if not merged_questions:
             raise QuizParseError("問題データを結合できませんでした。")
+
+        _validate_merged_questions(merged_questions)
     except QuizParseError:
         raise
     except Exception as exc:
@@ -169,9 +198,13 @@ def _parse_answer_blocks(a_md_text: str) -> dict[int, tuple[int, str]]:
         is_last_question = index == len(matches) - 1
         block_end = len(a_md_text) if is_last_question else matches[index + 1].start()
         answer_block = a_md_text[block_start:block_end].strip()
-        answers_by_number[int(match.group("number"))] = _extract_answer_data(
-            answer_block
-        )
+        question_number = int(match.group("number"))
+        extracted_answer = _extract_answer_data(answer_block)
+        current_answer = answers_by_number.get(question_number)
+        if current_answer is None or (
+            current_answer[0] == 0 and extracted_answer[0] != 0
+        ):
+            answers_by_number[question_number] = extracted_answer
 
     return answers_by_number
 
@@ -189,7 +222,32 @@ def _extract_answer_number(answer_block: str) -> tuple[int, int]:
     if inline_match is not None:
         return _to_halfwidth_number(inline_match.group("number")), inline_match.end()
 
-    marker_match = re.search(r"\*\*【正解の選択肢】\*\*", answer_block)
+    inline_bold_match = ANSWER_NUMBER_IN_BOLD_PATTERN.search(answer_block)
+    if inline_bold_match is not None:
+        return (
+            _to_halfwidth_number(inline_bold_match.group("number")),
+            inline_bold_match.end(),
+        )
+
+    bracket_match = ANSWER_NUMBER_IN_BRACKETS_PATTERN.search(answer_block)
+    if bracket_match is not None:
+        return _to_halfwidth_number(bracket_match.group("number")), bracket_match.end()
+
+    incorrect_match = INCORRECT_ANSWER_NUMBER_PATTERN.search(answer_block)
+    if incorrect_match is not None:
+        return (
+            _to_halfwidth_number(incorrect_match.group("number")),
+            incorrect_match.end(),
+        )
+
+    explanation_match = ANSWER_NUMBER_IN_EXPLANATION_PATTERN.search(answer_block)
+    if explanation_match is not None:
+        return (
+            _to_halfwidth_number(explanation_match.group("number")),
+            explanation_match.end(),
+        )
+
+    marker_match = ANSWER_MARKER_PATTERN.search(answer_block)
     if marker_match is not None:
         number_match = ANSWER_STANDALONE_NUMBER_PATTERN.search(
             answer_block,
@@ -229,3 +287,19 @@ def _extract_explanation(answer_block: str, explanation_start: int) -> str:
 def _to_halfwidth_number(number_text: str) -> int:
     """全角数字を半角数字へ正規化して整数へ変換する。"""
     return int(unicodedata.normalize("NFKC", number_text))
+
+
+def _validate_merged_questions(questions: list[Question]) -> None:
+    """結合済み問題一覧の整合性を検証する。"""
+    for question in questions:
+        if question.correct_number == 0:
+            raise QuizParseError(
+                f"問題番号 {question.number} の正解番号を抽出できませんでした。"
+            )
+
+        choice_numbers = {choice.number for choice in question.choices}
+        if question.correct_number not in choice_numbers:
+            raise QuizParseError(
+                f"問題番号 {question.number} の正解番号 {question.correct_number} "
+                "は選択肢内に存在しません。"
+            )

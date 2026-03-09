@@ -15,7 +15,7 @@ if src_dir not in sys.path:
 import streamlit as st  # noqa: E402
 
 from quiz_app.engine import QuizEngine  # noqa: E402
-from quiz_app.parser import Question, load_quiz_data  # noqa: E402
+from quiz_app.parser import Question, QuizParseError, load_quiz_data  # noqa: E402
 
 MD_DIR = Path(__file__).resolve().parents[2] / "md"
 
@@ -38,7 +38,12 @@ def _start_quiz(
     limit: int | None,
 ) -> None:
     """問題データを読み込み、クイズを開始する。"""
-    questions = load_quiz_data(str(q_path), str(a_path))
+    try:
+        questions = load_quiz_data(str(q_path), str(a_path))
+    except QuizParseError as exc:
+        st.error(str(exc))
+        return
+
     engine = QuizEngine()
     engine.start_quiz(questions=questions, is_random=is_random, limit=limit)
     st.session_state["engine"] = engine
@@ -66,7 +71,12 @@ def _render_home() -> None:
 
     is_random = st.checkbox("ランダム出題", value=False)
 
-    questions = load_quiz_data(str(q_path), str(a_path))
+    try:
+        questions = load_quiz_data(str(q_path), str(a_path))
+    except QuizParseError as exc:
+        st.error(str(exc))
+        return
+
     total_count = len(questions)
 
     limit_input = st.number_input(
@@ -216,4 +226,5 @@ def main() -> None:
         return
 
 
-main()
+if __name__ == "__main__":
+    main()
