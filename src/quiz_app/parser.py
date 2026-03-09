@@ -49,6 +49,9 @@ CHOICE_PATTERN = re.compile(
 TABLE_CHOICE_PATTERN = re.compile(
     r"^\|\s*(?:[^|\n]*\|\s*)?(?P<number>\d+)\s*\|(?P<text>.+?)\|\s*$", re.MULTILINE
 )
+MARKDOWN_HEADING_PATTERN = re.compile(r"^#{1,6}\s+.+$")
+BRACKET_HEADING_PATTERN = re.compile(r"^〈.+〉$")
+THEMATIC_BREAK_PATTERN = re.compile(r"^(?:---+|\*\*\*+|___+)\s*$")
 NUMBER_CHARS_PATTERN = r"0-9\uFF10-\uFF19"
 ANSWER_NUMBER_PATTERN = re.compile(
     rf"^.*正解[^\n]*?(?:\N{{FULLWIDTH COLON}}|:|は)\s*"
@@ -215,6 +218,12 @@ def _extract_standard_choices(question_block: str) -> list[Choice]:
             continue
 
         if TABLE_CHOICE_PATTERN.match(stripped_line):
+            break
+        if MARKDOWN_HEADING_PATTERN.match(stripped_line):
+            break
+        if BRACKET_HEADING_PATTERN.match(stripped_line):
+            break
+        if THEMATIC_BREAK_PATTERN.match(stripped_line):
             break
 
         current_lines.append(stripped_line)
