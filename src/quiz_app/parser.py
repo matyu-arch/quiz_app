@@ -176,16 +176,64 @@ def _extract_question_text(question_block: str) -> str:
 
 def _extract_choices(question_block: str) -> list[Choice]:
     """問題ブロックから選択肢一覧を抽出する。"""
-    choices = [
-        Choice(number=int(match.group("number")), text=match.group("text").strip())
-        for match in CHOICE_PATTERN.finditer(question_block)
-    ]
+    choices = _extract_standard_choices(question_block)
     if not choices:
         choices = [
             Choice(number=int(match.group("number")), text=match.group("text").strip())
             for match in TABLE_CHOICE_PATTERN.finditer(question_block)
         ]
     return choices
+
+
+def _extract_standard_choices(question_block: str) -> list[Choice]:
+    """通常形式で記述された選択肢を、折り返し行も含めて抽出する。"""
+    choices: list[Choice] = []
+    current_number: int | None = None
+    current_lines: list[str] = []
+
+    for raw_line in question_block.splitlines():
+        stripped_line = raw_line.strip()
+        if not stripped_line:
+            if current_number is not None and current_lines and current_lines[-1] != "":
+                current_lines.append("")
+            continue
+
+        choice_match = CHOICE_PATTERN.match(stripped_line)
+        if choice_match is not None:
+            if current_number is not None:
+                choices.append(
+                    Choice(
+                        number=current_number,
+                        text=_join_choice_lines(current_lines),
+                    )
+                )
+            current_number = int(choice_match.group("number"))
+            current_lines = [choice_match.group("text").strip()]
+            continue
+
+        if current_number is None:
+            continue
+
+        if TABLE_CHOICE_PATTERN.match(stripped_line):
+            break
+
+        current_lines.append(stripped_line)
+
+    if current_number is not None:
+        choices.append(
+            Choice(number=current_number, text=_join_choice_lines(current_lines))
+        )
+
+    return choices
+
+
+def _join_choice_lines(lines: list[str]) -> str:
+    """選択肢本文の行一覧を空行込みで自然な改行へ整形する。"""
+    normalized_lines = list(lines)
+    while normalized_lines and not normalized_lines[-1]:
+        normalized_lines.pop()
+
+    return "\n".join(normalized_lines)
 
 
 def _parse_answer_blocks(a_md_text: str) -> dict[int, tuple[int, str]]:
