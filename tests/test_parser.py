@@ -157,6 +157,50 @@ def test_parse_questions_merges_multiline_choice_text() -> None:
     )
 
 
+def test_parse_questions_does_not_merge_following_headings_into_last_choice() -> None:
+    """選択肢の後続にある見出しは最後の選択肢本文へ混入させないことを確認する。"""
+    md_text = """\
+### No.22 次の記述のうち、誤っているものはどれか。
+-  1. 選択肢1
+-  2. 選択肢2
+-  3. 選択肢3
+-  4. 最後の選択肢
+
+## 一般構造規定
+
+## 居室の採光、換気
+
+### No.23 次の記述のうち、正しいものはどれか。
+1. 次の問題の選択肢
+""".strip()
+
+    questions = parse_questions(md_text)
+
+    assert len(questions) == 2
+    assert questions[0].choices[-1] == Choice(number=4, text="最後の選択肢")
+
+
+def test_parse_questions_does_not_merge_bracket_heading_into_last_choice() -> None:
+    """山括弧見出しも最後の選択肢本文へ混入させないことを確認する。"""
+    md_text = """\
+### No.1
+次の記述のうち、誤っているものはどれか。
+1. 選択肢1
+2. 選択肢2
+3. 最後の選択肢
+〈一般構造規定〉
+
+### No.2
+次の問題文
+1. 次の問題の選択肢
+""".strip()
+
+    questions = parse_questions(md_text)
+
+    assert len(questions) == 2
+    assert questions[0].choices[-1] == Choice(number=3, text="最後の選択肢")
+
+
 def test_parse_questions_table_format():
     """表形式で記述された選択肢が正しく抽出されること。"""
     md_text = """### No.1
