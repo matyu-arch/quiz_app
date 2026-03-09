@@ -246,3 +246,259 @@ def test_load_quiz_data_raises_parse_error_for_invalid_markdown_format(
 
     with pytest.raises(QuizParseError):
         load_quiz_data(str(q_file_path), str(a_file_path))
+
+
+def test_merge_answers_extracts_answer_number_from_real_data_style() -> None:
+    """実データの「正解の選択肢は **4** です。」形式を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+                Choice(number=3, text="C"),
+                Choice(number=4, text="D"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+正解の選択肢は **4** です。
+
+以下に詳細な解説を示します。
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 4
+    assert "以下に詳細な解説を示します。" in merged_questions[0].explanation
+
+
+def test_load_quiz_data_raises_parse_error_when_answer_number_is_missing(
+    tmp_path: Path,
+) -> None:
+    """正解番号を抽出できない解答データは QuizParseError にする。"""
+    q_file_path = tmp_path / "valid_q.md"
+    a_file_path = tmp_path / "invalid_answer_missing.md"
+
+    q_file_path.write_text(
+        """\
+### No.1
+問題文
+
+1. A
+2. B
+3. C
+4. D
+""",
+        encoding="utf-8",
+    )
+    a_file_path.write_text(
+        """\
+### No.1
+このブロックには正解番号が含まれていません。
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(QuizParseError, match="正解番号"):
+        load_quiz_data(str(q_file_path), str(a_file_path))
+
+
+def test_load_quiz_data_raises_parse_error_when_answer_number_is_not_in_choices(
+    tmp_path: Path,
+) -> None:
+    """選択肢に存在しない正解番号は QuizParseError にする。"""
+    q_file_path = tmp_path / "valid_q.md"
+    a_file_path = tmp_path / "invalid_answer_out_of_range.md"
+
+    q_file_path.write_text(
+        """\
+### No.1
+問題文
+
+1. A
+2. B
+3. C
+4. D
+""",
+        encoding="utf-8",
+    )
+    a_file_path.write_text(
+        """\
+### No.1
+**正解: 9**
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(QuizParseError, match="存在しません"):
+        load_quiz_data(str(q_file_path), str(a_file_path))
+
+
+def test_merge_answers_extracts_answer_number_after_correct_marker() -> None:
+    """【正解】見出しの次に来る太字選択肢から正解番号を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+                Choice(number=3, text="C"),
+                Choice(number=4, text="D"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+**【正解】**
+**4. D**(誤っている記述)
+
+### 詳細な解説
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 4
+    assert merged_questions[0].explanation == "解説本文"
+
+
+def test_merge_answers_extracts_fullwidth_number_inside_quotes() -> None:
+    """「4」のように引用符付きの全角数字でも正解番号を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+                Choice(number=3, text="C"),
+                Choice(number=4, text="D"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+**正解は「\N{FULLWIDTH DIGIT FOUR}」です。**
+
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 4
+    assert merged_questions[0].explanation == "解説本文"
+
+
+def test_merge_answers_extracts_number_from_bracketed_bold_answer() -> None:
+    """【 1 】形式の太字回答から正解番号を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+**【 1 】** が正解です。
+
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 1
+
+
+def test_merge_answers_extracts_number_from_incorrect_statement_style() -> None:
+    """「誤っている選択肢は **1** です」形式を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+誤っている選択肢は **1** です。
+
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 1
+
+
+def test_merge_answers_extracts_number_from_explanation_line_marked_correct() -> None:
+    """解説中の「5. ...(正解)」形式から正解番号を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[Choice(number=index, text=str(index)) for index in range(1, 6)],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+### 【解説】
+*   **5. 建築できない(正解)**
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 5
+
+
+def test_merge_answers_keeps_first_valid_answer_when_duplicate_headers_exist() -> None:
+    """同一問題番号が重複した場合は先に得られた有効な答えを優先する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[
+                Choice(number=1, text="A"),
+                Choice(number=2, text="B"),
+            ],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+**正解:2**
+
+最初の解説
+
+### No.1
+答えが欠けた重複ブロック
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 2
+    assert "最初の解説" in merged_questions[0].explanation

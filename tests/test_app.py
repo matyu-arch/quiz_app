@@ -1,5 +1,7 @@
 """app モジュールの RED テスト。"""
 
+import importlib
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -7,6 +9,18 @@ from unittest.mock import patch
 from streamlit.testing.v1 import AppTest
 
 APP_TIMEOUT = 60
+
+
+def _build_app() -> AppTest:
+    """テスト対象の Streamlit アプリを関数から生成する。"""
+
+    def _run_app() -> None:
+        """テスト実行時にアプリ本体を呼び出す。"""
+        from quiz_app.app import main
+
+        main()
+
+    return AppTest.from_function(_run_app)
 
 
 @dataclass(frozen=True)
@@ -96,7 +110,7 @@ def _create_quiz_app():
 
     p1, p2 = _patches()
     with p1, p2:
-        app = AppTest.from_file("src/quiz_app/app.py")
+        app = _build_app()
         app.session_state["engine"] = engine
         app.session_state["page"] = "quiz"
         app.session_state["is_answered"] = False
@@ -111,7 +125,7 @@ def test_app_initial_screen_displays_title_and_start_button() -> None:
     """初期画面にタイトルとクイズ開始ボタンが表示されることを確認する。"""
     p1, p2 = _patches()
     with p1, p2:
-        app = AppTest.from_file("src/quiz_app/app.py")
+        app = _build_app()
         app.run(timeout=APP_TIMEOUT)
         assert app.title[0].value == "一級建築士 クイズアプリ"
         assert any(button.label == "クイズ開始" for button in app.button)
@@ -121,7 +135,7 @@ def test_app_clicking_start_sets_engine_and_switches_page() -> None:
     """開始ボタンクリックでエンジン生成と画面遷移が行われることを確認する。"""
     p1, p2 = _patches()
     with p1, p2:
-        app = AppTest.from_file("src/quiz_app/app.py")
+        app = _build_app()
         app.run(timeout=APP_TIMEOUT)
         assert "engine" not in app.session_state
         _click_button(app, "クイズ開始")
@@ -163,7 +177,7 @@ def test_app_result_screen_displays_score_and_mistakes() -> None:
 
     p1, p2 = _patches()
     with p1, p2:
-        app = AppTest.from_file("src/quiz_app/app.py")
+        app = _build_app()
         app.session_state["engine"] = engine
         app.session_state["page"] = "result"
         app.session_state["is_answered"] = False
@@ -175,6 +189,34 @@ def test_app_result_screen_displays_score_and_mistakes() -> None:
     assert _has_text(app, "スコア: 1 / 2")
     assert _has_text(app, "Q2")
     assert _has_text(app, "E2")
-    assert any(
-        button.label in {"ホームに戻る", "再スタート"} for button in app.button
-    )
+    assert any(button.label in {"ホームに戻る", "再スタート"} for button in app.button)
+
+
+def test_app_initial_screen_displays_parse_error_message() -> None:
+    """問題データの解析失敗時に画面へエラーメッセージを表示する。"""
+    from quiz_app.parser import QuizParseError
+
+    with (
+        patch(
+            "quiz_app.app._discover_quiz_files",
+            return_value=_fake_quiz_files(),
+        ),
+        patch(
+            "quiz_app.app.load_quiz_data",
+            side_effect=QuizParseError("正解番号を抽出できませんでした。"),
+        ),
+    ):
+        app = _build_app()
+        app.run(timeout=APP_TIMEOUT)
+
+    assert any("正解番号を抽出できませんでした。" in error.value for error in app.error)
+
+
+def test_importing_app_module_does_not_run_main() -> None:
+    """モジュール import 時には main が自動実行されないことを確認する。"""
+    sys.modules.pop("quiz_app.app", None)
+
+    with patch("streamlit.title") as mocked_title:
+        importlib.import_module("quiz_app.app")
+
+    mocked_title.assert_not_called()
