@@ -145,7 +145,7 @@ def test_app_initial_screen_displays_title_and_start_button() -> None:
     with p1, p2:
         app = _build_app()
         app.run(timeout=APP_TIMEOUT)
-        assert app.title[0].value == "一級建築士 クイズアプリ"
+        assert app.title[0].value == "法規クイズアプリ"
         assert any(button.label == "クイズ開始" for button in app.button)
 
 

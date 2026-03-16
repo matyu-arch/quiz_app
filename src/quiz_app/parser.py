@@ -51,13 +51,13 @@ TABLE_CHOICE_PATTERN = re.compile(
 )
 NUMBER_CHARS_PATTERN = r"0-9\uFF10-\uFF19"
 ANSWER_NUMBER_PATTERN = re.compile(
-    rf"^.*正解[^\n]*?(?:\N{{FULLWIDTH COLON}}|:|は)\s*"
+    rf"^.*(?:正解|正答)[^\n]*?(?:\N{{FULLWIDTH COLON}}|:|は)\s*"
     rf"[^{NUMBER_CHARS_PATTERN}\n]*?(?P<number>[{NUMBER_CHARS_PATTERN}]+)"
     rf"[^{NUMBER_CHARS_PATTERN}\n]*.*$",
     re.MULTILINE,
 )
 ANSWER_NUMBER_IN_BOLD_PATTERN = re.compile(
-    rf"^.*正解[^\n]*?\*\*(?P<number>[{NUMBER_CHARS_PATTERN}]+)\*\*.*$",
+    rf"^.*(?:正解|正答)[^\n]*?\*\*(?P<number>[{NUMBER_CHARS_PATTERN}]+)\*\*.*$",
     re.MULTILINE,
 )
 ANSWER_STANDALONE_NUMBER_PATTERN = re.compile(

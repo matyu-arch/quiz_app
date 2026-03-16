@@ -500,6 +500,30 @@ def test_merge_answers_extracts_number_from_explanation_line_marked_correct() ->
     assert merged_questions[0].correct_number == 5
 
 
+def test_merge_answers_extracts_number_from_seitou_format() -> None:
+    """「正答:4」形式から正解番号を抽出できることを確認する。"""
+    questions = [
+        Question(
+            number=1,
+            text="問題文",
+            choices=[Choice(number=index, text=str(index)) for index in range(1, 5)],
+            correct_number=0,
+            explanation="",
+        )
+    ]
+    a_md_text = """\
+### No.1
+**正答\N{FULLWIDTH COLON}4**
+
+解説本文
+""".strip()
+
+    merged_questions = merge_answers(questions, a_md_text)
+
+    assert merged_questions[0].correct_number == 4
+    assert merged_questions[0].explanation == "解説本文"
+
+
 def test_merge_answers_keeps_first_valid_answer_when_duplicate_headers_exist() -> None:
     """同一問題番号が重複した場合は先に得られた有効な答えを優先する。"""
     questions = [

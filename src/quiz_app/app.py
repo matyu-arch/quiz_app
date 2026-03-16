@@ -337,7 +337,7 @@ def _render_result() -> None:
 
 def main() -> None:
     """アプリ全体を描画する。"""
-    st.title("一級建築士 クイズアプリ")
+    st.title("法規クイズアプリ")
 
     if "page" not in st.session_state:
         st.session_state["page"] = "home"
